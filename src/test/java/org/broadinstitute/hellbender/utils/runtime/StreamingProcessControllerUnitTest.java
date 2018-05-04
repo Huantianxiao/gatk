@@ -10,11 +10,8 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.util.concurrent.TimeoutException;
 
-// NOTE: some Python implementations have bugs where sometimes the prompt is printed to stdout,
-// and sometimes to stderr:
-//
-//  https://bugs.python.org/issue17620
-//  https://bugs.python.org/issue1927
+// Tests for the StreamingProcessController. Although these tests use and are dependent on Python, they do not test
+// or depend on the gatktool python package.
 //
 // NOTE: TestNG has a bug where it throws ArrayIndexOutOfBoundsException instead of TimeoutException
 // exception when the test time exceeds the timeOut threshold. This is fixed but not yet released:
@@ -23,78 +20,45 @@ import java.util.concurrent.TimeoutException;
 //
 public class StreamingProcessControllerUnitTest extends BaseTest {
     private final static String NL = System.lineSeparator();
-    private final static String PYTHON_PROMPT = ">>> ";
 
     @Test(groups = "python", timeOut = 10000)
     public void testSerialCommands() throws TimeoutException, IOException {
-        // start an interactive Python session with unbuffered IO
-        final ProcessSettings processSettings = new ProcessSettings(new String[] {"python", "-i", "-u"});
-
-        final StreamingProcessController controller = new StreamingProcessController(processSettings, PYTHON_PROMPT, true);
-        Assert.assertTrue(controller.start());
-
-        // consume the Python startup banner debris, but don't try validate it
-        controller.getProcessOutputByPrompt();
+        final StreamingProcessController controller = initializePythonControllerWithAckFIFO(false);
 
         controller.writeProcessInput("x = 37" + NL);
-        ProcessOutput response = controller.getProcessOutputByPrompt();
-        StreamingPythonTestUtils.assertPythonPrompt(response, PYTHON_PROMPT);
-
         controller.writeProcessInput("x = x + 2" + NL);
-        response = controller.getProcessOutputByPrompt();
-        StreamingPythonTestUtils.assertPythonPrompt(response, PYTHON_PROMPT);
 
-        final File tempFile = createTempFile("testPythonStdoutSerial", "txt");
+        boolean ack = requestAndWaitForAck(controller);
+        Assert.assertTrue(ack);
 
-        final String writeOutput = String.format("fd=open('%s', 'w')", tempFile.getAbsolutePath());
-        controller.writeProcessInput(writeOutput + NL);
-        response = controller.getProcessOutputByPrompt();
-        StreamingPythonTestUtils.assertPythonPrompt(response, PYTHON_PROMPT);
+        final File tempFile = writePythonExpressionToTempFile(controller, "str(x)");
 
-        controller.writeProcessInput("fd.write(str(x) + '\\n')" + NL);
-        response = controller.getProcessOutputByPrompt();
-        StreamingPythonTestUtils.assertPythonPrompt(response, PYTHON_PROMPT);
+        final String actualOutput = getLineFromTempFile(tempFile);
+        Assert.assertEquals(actualOutput, "39");
 
-        controller.writeProcessInput("fd.close()" + NL);
-        response = controller.getProcessOutputByPrompt();
-        StreamingPythonTestUtils.assertPythonPrompt(response, PYTHON_PROMPT);
-
-        controller.terminate();
+        terminatePythonController(controller);
         Assert.assertFalse(controller.getProcess().isAlive());
-
-        try (final FileReader fr = new FileReader(tempFile);
-             final BufferedReader br = new BufferedReader(fr)) {
-            Assert.assertEquals(br.readLine(), "39");
-        }
     }
 
     @Test(timeOut = 50000)
-    public void testMultipleParallelStreamingControllers() throws TimeoutException {
-        final ProcessSettings catProcessSettings = new ProcessSettings(new String[] {"cat"});
-        final StreamingProcessController catController = new StreamingProcessController(catProcessSettings);
-        Assert.assertTrue(catController.start());
+    public void testMultipleParallelStreamingControllers() throws TimeoutException, IOException {
+        final StreamingProcessController controller1 = initializePythonControllerWithAckFIFO(false);
+        final StreamingProcessController controller2 = initializePythonControllerWithAckFIFO(false);
 
-        final ProcessSettings teeProcessSettings = new ProcessSettings(new String[] {"tee"});
-        final StreamingProcessController teeController = new StreamingProcessController(teeProcessSettings);
-        Assert.assertTrue(teeController.start());
+        controller1.writeProcessInput("x = 'process1'" + NL);
+        controller2.writeProcessInput("x = 'process2'" + NL);
 
-        final String catString = "send to cat\n";
-        final String teeString = "send to tee\n";
+        final File tempFile1 = writePythonExpressionToTempFile(controller1, "str(x)");
+        final File tempFile2 = writePythonExpressionToTempFile(controller2, "str(x)");
 
-        catController.writeProcessInput(catString);
-        teeController.writeProcessInput(teeString);
+        Assert.assertEquals(getLineFromTempFile(tempFile1), "process1");
+        Assert.assertEquals(getLineFromTempFile(tempFile2), "process2");
 
-        final ProcessOutput catResponseLine = catController.getProcessOutputByLine();
-        final ProcessOutput teeResponseLine = teeController.getProcessOutputByLine();
+        controller1.terminate();
+        controller2.terminate();
 
-        StreamingPythonTestUtils.assertResponseOutput(catResponseLine, catString, true);
-        StreamingPythonTestUtils.assertResponseOutput(teeResponseLine, teeString, true);
-
-        catController.terminate();
-        teeController.terminate();
-
-        Assert.assertFalse(catController.getProcess().isAlive());
-        Assert.assertFalse(teeController.getProcess().isAlive());
+        Assert.assertFalse(controller1.getProcess().isAlive());
+        Assert.assertFalse(controller2.getProcess().isAlive());
     }
 
     // The timeout value here needs to exceed the timeout value used by StreamingProcessController.
@@ -106,80 +70,25 @@ public class StreamingProcessControllerUnitTest extends BaseTest {
 
         final ProcessSettings processSettings = new ProcessSettings(new String[] {"python", "-i", "-u", "-c", writeOutScript});
 
-        final StreamingProcessController controller = new StreamingProcessController(processSettings, PYTHON_PROMPT);
+        final StreamingProcessController controller = new StreamingProcessController(processSettings);
 
-        Assert.assertTrue(controller.start());
+        Assert.assertNotNull(controller.start());
         controller.terminate();
         Assert.assertFalse(controller.getProcess().isAlive());
 
-        try (final FileReader fis = new FileReader(tempFile);
-             final BufferedReader br = new BufferedReader(fis)) {
-            Assert.assertEquals(br.readLine(), "some output");
-        }
-    }
-
-    // using invocationTimeOut seems to be buggy and causes this to stop after one invocation
-    //@Test(invocationCount = 10, invocationTimeOut = 10000)
-    @Test(groups = "python", timeOut = 10000) // make sure the test timeout exceeds the controller timeout, since we want to trigger that
-    public void testIsOutputAvailable() throws TimeoutException, InterruptedException {
-        // start an interactive Python session with unbuffered IO
-        final ProcessSettings processSettings = new ProcessSettings(new String[] {"python", "-i", "-u"});
-
-        final StreamingProcessController controller = new StreamingProcessController(processSettings, PYTHON_PROMPT);
-        Assert.assertTrue(controller.start());
-        // consume the Python startup banner debris, but don't try validate it
-        controller.getProcessOutputByPrompt();
-
-        Assert.assertFalse(controller.isOutputAvailable());
-        controller.writeProcessInput("a = 3" + NL);
-        while (!controller.isOutputAvailable()) {
-            // TestNG will throw if we exceed the timeout
-        };
-        Assert.assertTrue(controller.isOutputAvailable());
-
-        controller.terminate();
-        Assert.assertFalse(controller.getProcess().isAlive());
-    }
-
-    @Test(groups = "python", timeOut = 10000)
-    public void testStderrOutput() throws TimeoutException {
-        // test write to stderr from python
-        // start an interactive Python session with unbuffered IO
-        final ProcessSettings processSettings = new ProcessSettings(new String[] {"python", "-i", "-u"});
-
-        final StreamingProcessController controller = new StreamingProcessController(processSettings, PYTHON_PROMPT);
-        Assert.assertTrue(controller.start());
-        // consume the Python startup banner debris, but don't try validate it
-        controller.getProcessOutputByPrompt();
-
-        controller.writeProcessInput("import sys" + NL + "sys.stderr.write('error output to stderr\\n')" + NL);
-        ProcessOutput po = controller.getProcessOutputByPrompt();
-
-        Assert.assertNotNull(po.getStderr());
-        Assert.assertNotNull(po.getStderr().getBufferString());
-        Assert.assertNotNull(po.getStderr().getBufferString().contains("error output to stderr"));
-
-        controller.terminate();
-        Assert.assertFalse(controller.getProcess().isAlive());
+        Assert.assertEquals(getLineFromTempFile(tempFile), "some output");
     }
 
     @Test(groups = "python", timeOut = 10000)
     public void testStderrRedirect() throws TimeoutException {
-        // test write to stderr from python
-        // start an interactive Python session with unbuffered IO
-        final ProcessSettings processSettings = new ProcessSettings(new String[] {"python", "-i", "-u"});
-
-        // redirect the process' stderr to stdout
-        processSettings.setRedirectErrorStream(true);
-
-        final StreamingProcessController controller = new StreamingProcessController(processSettings, PYTHON_PROMPT);
-        Assert.assertNotNull(controller.start());
-        // consume the Python startup banner debris, but don't try validate it
-        controller.getProcessOutputByPrompt();
+        final StreamingProcessController controller = initializePythonControllerWithAckFIFO(true);
 
         // write to stderr, but we expect to get it from stdout due to redirection
         controller.writeProcessInput("import sys" + NL + "sys.stderr.write('error output to stderr\\n')" + NL);
-        ProcessOutput po = controller.getProcessOutputByPrompt();
+        boolean ack = requestAndWaitForAck(controller);
+        Assert.assertTrue(ack);
+
+        ProcessOutput po = controller.getProcessOutput();
 
         Assert.assertNotNull(po.getStdout());
         Assert.assertNotNull(po.getStdout().getBufferString());
@@ -207,47 +116,11 @@ public class StreamingProcessControllerUnitTest extends BaseTest {
         Assert.assertFalse(catController.getProcess().isAlive());
     }
 
-    // this needs to have a testNG timeOut that is longer than the timeout built in to the StreamingProcessController,
-    // since we want to trigger the latter first, to ensure that we hit the builtin one first
-    @Test(groups = "python", timeOut = 50000, expectedExceptions=TimeoutException.class)
-    public void testPromptTimeout() throws TimeoutException {
-        // start an interactive Python session with unbuffered IO
-        final ProcessSettings processSettings = new ProcessSettings(new String[] {"python", "-i", "-u"});
-
-        final StreamingProcessController controller = new StreamingProcessController(processSettings, "bogus");
-        Assert.assertTrue(controller.start());
-
-        try {
-            // this will hang waiting for a prompt to appear, until timeout, since the prompt is bogus
-            controller.getProcessOutputByPrompt();
-        }
-        finally {
-            controller.terminate();
-            Assert.assertFalse(controller.getProcess().isAlive());
-        }
-    }
-
-    @Test(groups = "python", expectedExceptions=IllegalStateException.class)
-    public void testInvalidPromptSynchronization() throws TimeoutException {
-        final ProcessSettings pythonProcessSettings = new ProcessSettings(new String[] {"python", "-i", "-u"});
-
-        final StreamingProcessController pythonController = new StreamingProcessController(pythonProcessSettings);
-        pythonController.start();
-
-        try {
-            pythonController.getProcessOutputByPrompt();
-        }
-        finally {
-            pythonController.terminate();
-            Assert.assertFalse(pythonController.getProcess().isAlive());
-        }
-    }
-
     @Test(expectedExceptions = IllegalStateException.class)
     public void testRedundantStart() throws TimeoutException {
-        final ProcessSettings catProcessSettings = new ProcessSettings(new String[] {"cat"});
+        final ProcessSettings catProcessSettings = new ProcessSettings(new String[] {"python", "-i", "-u"});
         final StreamingProcessController catController = new StreamingProcessController(catProcessSettings);
-        Assert.assertTrue(catController.start());
+        Assert.assertNotNull(catController.start());
 
         try {
             catController.start();
@@ -255,6 +128,60 @@ public class StreamingProcessControllerUnitTest extends BaseTest {
             catController.terminate();
             Assert.assertFalse(catController.getProcess().isAlive());
         }
+    }
+
+    private StreamingProcessController initializePythonControllerWithAckFIFO(boolean redirectStderr) {
+        // start an interactive Python session with unbuffered IO
+        final ProcessSettings processSettings = new ProcessSettings(new String[] {"python", "-i", "-u"});
+
+        if (redirectStderr) {
+            // redirect the process' stderr to stdout
+            processSettings.setRedirectErrorStream(true);
+        }
+
+        final StreamingProcessController controller = new StreamingProcessController(processSettings, true);
+        final File ackFIFO = controller.start();
+
+        Assert.assertNotNull(ackFIFO);
+        // manually do ack handshake
+        controller.writeProcessInput(
+                String.format(
+                        "import os" + NL +
+                                "ackFIFODescriptor = os.open('%s', os.O_WRONLY)" + NL +
+                                "akcFIFOWriter = os.fdopen(ackFIFODescriptor, 'w')" + NL,
+                        ackFIFO.getAbsolutePath())
+        );
+
+        controller.openAckFIFOForRead(); // unblock python
+        return controller;
+    }
+
+    private File writePythonExpressionToTempFile(final StreamingProcessController controller, final String pythonExpression) {
+        final File tempFile = createTempFile("testPythonStdoutSerial", "txt");
+        controller.writeProcessInput(String.format("fd=open('%s', 'w')", tempFile.getAbsolutePath()) + NL);
+        controller.writeProcessInput(String.format("fd.write(%s + '\\n')", pythonExpression) + NL);
+        controller.writeProcessInput("fd.close()" + NL);
+        final boolean ack = requestAndWaitForAck(controller);
+        Assert.assertTrue(ack);
+        return tempFile;
+    }
+
+    private boolean requestAndWaitForAck(final StreamingProcessController controller) {
+        controller.writeProcessInput("akcFIFOWriter.write('ack')" + NL);
+        controller.writeProcessInput("akcFIFOWriter.flush()" + NL);
+        return controller.waitForAck();
+    }
+
+    private String getLineFromTempFile(final File tempFile) throws IOException {
+        try (final FileReader fr = new FileReader(tempFile);
+             final BufferedReader br = new BufferedReader(fr)) {
+            return br.readLine();
+        }
+    }
+
+    private void terminatePythonController(final StreamingProcessController controller) {
+        controller.writeProcessInput("ackFIFOWriter.close()" + NL);
+        controller.terminate();
     }
 
 }
