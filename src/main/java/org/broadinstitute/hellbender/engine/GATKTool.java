@@ -809,14 +809,15 @@ public abstract class GATKTool extends CommandLineProgram {
      */
     protected FeatureInput<? extends Feature> addFeatureInputsAfterInitialization(final String filePath,
                                                                                   final String name,
-                                                                                  final Class<? extends Feature> featureType) {
+                                                                                  final Class<? extends Feature> featureType,
+                                                                                  final int featureQueryLookahead) {
 
         final FeatureInput<? extends Feature> featureInput = new FeatureInput<>(name + FeatureInput.FEATURE_ARGUMENT_TAG_DELIMITER + filePath);
 
         //Add datasource to the feature manager too so that it can be queried. Setting lookahead to 0 to avoid caching.
         //Note: we are disabling lookahead here because of windowed queries that need to "look behind" as well.
         features.addToFeatureSources(
-                0,
+                featureQueryLookahead,
                 featureInput,
                 featureType,
                 cloudPrefetchBuffer,

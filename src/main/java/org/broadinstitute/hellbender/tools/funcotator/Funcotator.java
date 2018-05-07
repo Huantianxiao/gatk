@@ -212,6 +212,7 @@ public class Funcotator extends VariantWalker {
      * The current version of {@link Funcotator}.
      */
     public static final String VERSION = "0.0.2";
+    public static final int FEATURE_QUERY_LOOKAHEAD = 100000;
 
     //==================================================================================================================
     // Arguments:
@@ -580,7 +581,8 @@ public class Funcotator extends VariantWalker {
                         IOUtils.getPath( dataSourceProperties.getProperty(DataSourceUtils.CONFIG_FILE_FIELD_NAME_SRC_FILE) )
                 ).toUri().toString(),
                 name,
-                featureClazz
+                featureClazz,
+                FEATURE_QUERY_LOOKAHEAD
         );
 
         // Add our feature input to our list of manual inputs:

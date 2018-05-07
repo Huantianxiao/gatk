@@ -211,6 +211,20 @@ public class FuncotatorIntegrationTest extends CommandLineProgramTest {
         Assert.assertEquals(doDebugTests, false);
     }
 
+    @Test
+    public void testLocalThing(){
+        ArgumentsBuilder args = new ArgumentsBuilder();
+        args.addArgument("output-file-format", "VCF");
+        args.addArgument("ref-version", "hg19");
+        args.addArgument("data-sources-path", "/Users/louisb/data/funcotator/funcotator_dataSources.v1.2.20180329/");
+        args.addReference(new File("/Users/louisb/data/Homo_sapiens_assembly19.fasta"));
+        args.addOutput(createTempFile("out",".vcf"));
+        args.addVCF(new File("/Users/louisb/Workspace/gatk/0816201804HC0_R01C01.vcf.gz"));
+        args.addArgument("L", "1:1-10000000");
+        runCommandLine(args);
+
+    }
+
     @Test(dataProvider = "provideForIntegrationTest")
     public void testFuncotatorWithoutValidatingResults(final String dataSourcesPath,
                                 final String refVer,
