@@ -518,7 +518,7 @@ task sparkJar(type: ShadowJar) {
 }
 
 task bundle(type: Zip) {
-    dependsOn shadowJar, sparkJar, 'gatkTabComplete', 'createPythonPackageArchive', 'gatkDoc'
+    dependsOn shadowJar, sparkJar, 'gatkTabComplete', 'createCondaYML', 'gatkDoc'
 
     doFirst {
         assert file("gatk").exists()
@@ -542,12 +542,9 @@ task bundle(type: Zip) {
         rename 'GATKConfig.properties', 'GATKConfig.EXAMPLE.properties'
     }
 
-    from("${buildDir}/${pythonPackageArchiveName}")
-    // When including gatkcondaenv.yml file in the release bundle, strip off the
-    // 'build/' prefix used for the location of the Python package archive.
-    from("scripts/gatkcondaenv.yml", {
-        filter { line -> line.replace("build/${pythonPackageArchiveName}", pythonPackageArchiveName) }
-    })
+    from("${pythonPackageArchiveName}")
+    from("gatkcondaenv.yml")
+    from("gatkcondaenv-intel.yml")
     into(baseName)
 
     doLast {
@@ -555,14 +552,54 @@ task bundle(type: Zip) {
     }
 }
 
-task createPythonPackageArchive(type: Zip) {
+// Create two GATK conda yml environment files: one for standard GATK and one for running GATK with Intel hardware.
+task createCondaYML() {
+    dependsOn 'pythonPackageArchive'
+    final condaEnvTemplateFile = "scripts/gatkcondaenv.yml.template"
 
+    def standardCondaBindings = [
+            "condaEnvName":"gatk",
+            "condaEnvDescription" : "Conda environment for GATK Python Tools",
+            "tensorFlowDependency" : "tensorflow==1.4.0"]
+    condaYMLFromTemplate(condaEnvTemplateFile, standardCondaBindings, new File("gatkcondaenv.yml"))
+
+    def intelCondaBindings = [
+            "condaEnvName":"gatkintel",
+            "condaEnvDescription" : "Conda environment for GATK Python Tools running with Intel hardware acceleration",
+            "tensorFlowDependency" :
+                    "https://anaconda.org/intel/tensorflow/1.4.0/download/tensorflow-1.4.0-cp36-cp36m-linux_x86_64.whl"]
+    condaYMLFromTemplate(condaEnvTemplateFile, intelCondaBindings, new File("gatkcondaenv.intel.yml"))
+}
+
+def condaYMLFromTemplate(sourceTemplateFile, ymlBindings, targetFile) {
+    def templateFile = new File(sourceTemplateFile)
+    def templateEngine = new groovy.text.GStringTemplateEngine()
+    def template = templateEngine.createTemplate(templateFile).make(ymlBindings)
+    targetFile.withWriter('UTF-8') { writer -> writer.write(template.toString()) }
+}
+
+//// Creates a standard, local, GATK conda environment. For use in iterative development, assumes
+//// conda or miniconda is installed.
+////
+//// NOTE: This CREATES a local conda environment; but does not *activate* it.
+//task createCondaEnv {
+//    dependsOn 'createCondaYML'
+//    copy {
+//        from("${buildDir}/${pythonPackageArchiveName}")
+//        into "."
+//    }
+//    exec { executable "conda" args "env", "remove", "-n", "gatk" }
+//    exec { executable "conda" args "env", "create", "-f", "gatkcondaenv.yml" }
+//    new File(${pythonPackageArchiveName}).delete();
+//}
+
+task pythonPackageArchive(type: Zip) {
     doFirst {
         logger.lifecycle("Creating GATK Python package archive...")
         assert file("src/main/python/org/broadinstitute/hellbender/").exists()
     }
 
-    destinationDir file("$buildDir")
+    destinationDir file(".")
     archiveName pythonPackageArchiveName
     from("src/main/python/org/broadinstitute/hellbender/")
     into("/")

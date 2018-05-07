@@ -5,7 +5,7 @@ ARG DRELEASE
 ADD . /gatk
 
 WORKDIR /gatk
-RUN /gatk/gradlew clean compileTestJava sparkJar localJar createPythonPackageArchive -Drelease=$DRELEASE
+RUN /gatk/gradlew clean compileTestJava sparkJar localJar createCondaYML -Drelease=$DRELEASE
 
 WORKDIR /root
 
@@ -41,7 +41,7 @@ RUN mkdir $DOWNLOAD_DIR && \
     rm $DOWNLOAD_DIR/miniconda.sh
 ENV PATH $CONDA_PATH/envs/gatk/bin:$CONDA_PATH/bin:$PATH
 WORKDIR /gatk
-RUN conda env create -n gatk -f /gatk/scripts/gatkcondaenv.yml && \
+RUN conda env create -n gatk -f gatkcondaenv.yml && \
     echo "source activate gatk" >> /gatk/gatkenv.rc
 
 CMD ["bash", "--init-file", "/gatk/gatkenv.rc"]

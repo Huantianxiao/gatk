@@ -58,10 +58,9 @@ releases of the toolkit.
       environment and dependencies required by these tools. The GATK Docker image comes with this environment
       pre-configured. In order to establish an environment suitable to run these tools outside of the Docker image, the
       conda [gatkcondaenv.yml](https://github.com/broadinstitute/gatk/blob/master/scripts/gatkcondaenv.yml) file is
-      provided. To establish the conda environment locally, [Conda](https://conda.io/docs/index.html) must first
-      be installed. Then, create the gatk environment by running the command ```conda env create -n gatk -f gatkcondaenv.yml```
-      (developers should run ```./gradlew createPythonPackageArchive```, followed by
-      ```conda env create -n gatk -f scripts/gatkcondaenv.yml``` from within the root of the repository clone).
+      provided. To establish the conda environment locally, [MiniConda or Conda](https://conda.io/docs/index.html) must first
+      be installed. Then, create the gatk environment by running ```./gradlew createCondaYML```, followed by the command
+      ```conda env create -n gatk -f gatkcondaenv.yml``` from within the root of the repository clone.
       To activate the environment once it has been created, run the command ```source activate gatk```. See the
       [Conda](https://conda.io/docs/user-guide/tasks/manage-environments.html) documentation for
       additional information about using and managing Conda environments.
